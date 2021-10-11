@@ -41,6 +41,7 @@ def parse_args():
 def main(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu if args.multi_gpu is None else '0,1,2,3'
     '''CREATE DIR'''
+    print('CREATE DIR')
     experiment_dir = Path('./experiment/')
     experiment_dir.mkdir(exist_ok=True)
     file_dir = Path(str(experiment_dir) +'/'+ str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')))
@@ -51,6 +52,7 @@ def main(args):
     log_dir.mkdir(exist_ok=True)
 
     '''LOG'''
+    print('LOG')
     args = parse_args()
     logger = logging.getLogger('GACNet')
     logger.setLevel(logging.INFO)
@@ -109,6 +111,7 @@ def main(args):
         model.cuda(device_ids[0])
         model = torch.nn.DataParallel(model, device_ids=device_ids)
     else:
+        print('CUDA')
         model.cuda()
 
     history = defaultdict(lambda: list())
