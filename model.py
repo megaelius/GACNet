@@ -77,6 +77,7 @@ def farthest_point_sample(xyz, npoint):
 
 def query_ball_point(radius, nsample, xyz, new_xyz):
     """
+    Graph creation is done here. It seems that it is not done randomly????
     Input:
         radius: local region radius
         nsample: max sample number in local region
@@ -90,6 +91,21 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     _, S, _ = new_xyz.shape
     group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
     sqrdists = square_distance(new_xyz, xyz)
+    group_idx[sqrdists > radius ** 2] = N
+    group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
+    group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
+    mask = group_idx == N
+    group_idx[mask] = group_first[mask]
+    return group_idx
+
+def query_ball_point_color(radius, nsample, points, new_points):
+    device = points.device
+    B, N, C = points.shape
+    _, S, _ = new_points.shape
+    #print(points.shape)
+    #print(points)
+    group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
+    sqrdists = square_distance(new_points, points)
     group_idx[sqrdists > radius ** 2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
     group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
@@ -114,7 +130,9 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     S = npoint
     fps_idx = farthest_point_sample(xyz, npoint) # [B, npoint, C]
     new_xyz = index_points(xyz, fps_idx)
-    idx = query_ball_point(radius, nsample, xyz, new_xyz)
+    #idx = query_ball_point(radius, nsample, xyz, new_xyz)
+    new_points = index_points(points,fps_idx)
+    idx = query_ball_point_color(radius, nsample, points[:,:,:3], new_points[:,:,:3])
     grouped_xyz = index_points(xyz, idx) # [B, npoint, nsample, C]
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
     if points is not None:
@@ -306,20 +324,49 @@ class GACNet(nn.Module):
         self.conv2 = nn.Conv1d(128, num_classes, 1)
 
     def forward(self, xyz, point):
+        #xyz contains the coordinates
+        #point contains the data RGB + normalized XYZ
+        #NPoints = 4096
+        #NClasses = 13
+
+        #print('Input:', xyz.shape, point.shape)
+        #[BS,3,NPoints], [BS,6,NPoints]
         l1_xyz, l1_points = self.sa1(xyz, point)
+        #print(l1_xyz.shape, l1_points.shape)
+        #[BS,3,1024], [BS,64,1024]
         l2_xyz, l2_points = self.sa2(l1_xyz, l1_points)
+        #print(l2_xyz.shape, l2_points.shape)
+        #[BS,3,256], [BS,64,256]
         l3_xyz, l3_points = self.sa3(l2_xyz, l2_points)
+        #print(l3_xyz.shape, l3_points.shape)
+        #[BS,3,64], [BS,128,64]
         l4_xyz, l4_points = self.sa4(l3_xyz, l3_points)
+        #print(l4_xyz.shape, l4_points.shape)
+        #[BS,3,16], [BS,512,16]
 
         l3_points = self.fp4(l3_xyz, l4_xyz, l3_points, l4_points)
+        #print(l3_points.shape)
+        #[BS,256,64]
         l2_points = self.fp3(l2_xyz, l3_xyz, l2_points, l3_points)
+        #print(l2_points.shape)
+        #[BS,256,256]
         l1_points = self.fp2(l1_xyz, l2_xyz, l1_points, l2_points)
+        #print(l1_points.shape)
+        #[BS,128,1024]
         l0_points = self.fp1(xyz, l1_xyz, None, l1_points)
+        #print(l0_points.shape)
+        #[BS,128,NPoints]
 
         x = self.drop1(F.relu(self.bn1(self.conv1(l0_points))))
+        #print(x.shape)
+        #[BS,128,NPoints]
         x = self.conv2(x)
+        #print(x.shape)
+        #[BS,NClasses,NPoints]
         x = F.log_softmax(x, dim=1)
         x = x.permute(0, 2, 1)
+        #print(x.shape)
+        #[BS,NPoints,NClasses]
         return x
 
 if __name__ == '__main__':
